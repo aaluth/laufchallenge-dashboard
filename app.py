@@ -5,7 +5,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import plotly.express as px
 import plotly.graph_objects as go 
-from datetime import datetime # Neu importiert für den Zeitstempel
+from datetime import datetime 
 
 # ==============================================================================
 # 0. KONFIGURATION & GLOBALE VARIABLEN
@@ -26,30 +26,30 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-# ... (Teil von Abschnitt 0)
+
 # Google Sheets Zugangsdaten
 SHEET_ID = "1z-mPq_eqFDQvMA-sZ6TkDoPN-x8FTCu2brWd1PkHO3I"
 WORKSHEET_NAME = "Laufdaten" 
-# JSON_PATH = "fifth-honor-479711-n7-c0648bdb7289.json" # DIESE ZEILE ENTFERNEN ODER AUSKOMMENTIEREN
+# JSON_PATH wurde entfernt, da wir Streamlit Secrets verwenden
+
+# Zeitstempel der letzten Datenladung (Wichtig: Global definiert zur Behebung des NameError)
+LAST_LOAD_TIME = datetime.now().strftime("%d.%m.%Y, %H:%M Uhr")
+
 
 # ==============================================================================
-# 1. DATEN LADEN (Caching & gspread)
+# 1. DATEN LADEN (Caching & gspread) - ANGEPASST FÜR STREAMLIT SECRETS
 # ==============================================================================
 
 @st.cache_data(ttl=300)
 def load_data():
     """Lädt Daten aus Google Sheets über gspread und JSON-Key (jetzt aus Streamlit Secrets)."""
     try:
-        # Importiere die notwendige Bibliothek innerhalb der Funktion für die Cloud
-        from oauth2client.service_account import ServiceAccountCredentials
-        import json
-        
         # Sicherstellen, dass die Keys in den Secrets vorhanden sind
         if 'gcp_service_account' not in st.secrets:
              st.error("❌ Die Secrets für den Google Service Account wurden nicht gefunden. Bitte überprüfen Sie die Streamlit Secrets Box.")
              st.stop()
              
-        # Erstelle ein Credential-Objekt direkt aus den Secrets
+        # Erstelle ein Credential-Objekt direkt aus den Secrets (wichtig: from_json_keyfile_dict verwenden)
         creds_info = st.secrets["gcp_service_account"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(
             creds_info, 
@@ -63,7 +63,7 @@ def load_data():
         df = pd.DataFrame(data)
         return df
     except Exception as e:
-        st.error("❌ Ein Fehler ist beim Laden der Daten aufgetreten. Haben Sie die Sheets-ID und die Secrets korrekt hinterlegt?")
+        st.error("❌ Ein Fehler ist beim Laden der Daten aufgetreten. Haben Sie die Sheets-ID korrekt hinterlegt und den Service Account zum Google Sheet hinzugefügt?")
         st.exception(e)
         st.stop()
 
@@ -132,9 +132,10 @@ if df.empty or df['KM'].sum() == 0:
 with st.sidebar:
     # Logo wird jetzt lokal geladen
     try:
+        # Annahme: 'logo.png' liegt im GitHub-Repo
         st.image("logo.png", width=180)
     except FileNotFoundError:
-        st.warning("Logo 'logo.png' nicht gefunden. Bitte speichern Sie die Logodatei im gleichen Ordner wie app.py.")
+        st.warning("Logo 'logo.png' nicht gefunden. Bitte speichern Sie die Logodatei im GitHub-Repo.")
 
     st.markdown(f"<h1 style='text-align: center; color: {PRIMARY_COLOR}; font-size: 2.2em;'>Laufchallenge</h1>", unsafe_allow_html=True)
     st.markdown("---")
@@ -196,7 +197,7 @@ st.markdown(
     f"""<h1 style='color: {PRIMARY_COLOR};'>Laufchallenge Übersicht</h1>""", 
     unsafe_allow_html=True
 )
-st.caption(f"Letzte Aktualisierung der Daten: **{LAST_LOAD_TIME}**") # NEU: Datenaktualität
+st.caption(f"Letzte Aktualisierung der Daten: **{LAST_LOAD_TIME}**") # KORRIGIERT: LAST_LOAD_TIME ist jetzt global
 
 # --- 4. Metriken (Fortschritt) ---
 with st.container(border=True):
@@ -267,7 +268,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("---") 
 
 # ==============================================================================
-# 6. DIAGRAMM: Gruppen-KM-Vergleich (KW-Filter anwendbar, Alle Gruppen sichtbar)
+# 6. DIAGRAMM: Gruppen-KM-Vergleich 
 # ==============================================================================
 
 ranking_period = selected_kw if selected_kw != 'Gesamt' else 'Gesamt' 
@@ -289,7 +290,7 @@ if 'Gruppe' in df.columns:
     else:
         group_bar_data = pd.DataFrame({'Gruppe': all_groups, 'KM': 0})
     
-    # NEU: Highlighting der ausgewählten Gruppe
+    # Highlighting der ausgewählten Gruppe
     group_bar_data['Color'] = group_bar_data['Gruppe'].apply(
         lambda x: PRIMARY_COLOR if x == selected_group else SECONDARY_BACKGROUND_COLOR
     )
@@ -300,9 +301,9 @@ if 'Gruppe' in df.columns:
         y='KM',
         title=f'Gesamt-KM der Gruppen ({ranking_period})',
         labels={'KM': 'Kilometer', 'Gruppe': 'Gruppe'},
-        color='Color', # Verwendung der Color-Spalte für die Farbe
-        color_discrete_map='identity', # Plotly anweisen, die Farben direkt zu verwenden
-        template="plotly_white" # NEU: Moderneres Theme
+        color='Color', 
+        color_discrete_map='identity', 
+        template="plotly_white"
     )
 
     fig_group_bar.update_layout(
@@ -320,7 +321,7 @@ if 'Gruppe' in df.columns:
 st.markdown("<br>", unsafe_allow_html=True) 
 
 # ==============================================================================
-# 7. Diagramm: Name-KM-Vergleich (ALLE Namen, Filter Gruppe/KW)
+# 7. Diagramm: Name-KM-Vergleich 
 # ==============================================================================
 
 st.subheader(f"Einzelwertung: Kilometer-Vergleich nach Name ({ranking_period})")
@@ -337,7 +338,7 @@ if 'Name' in df.columns:
     runner_summary = df_base_runner.groupby('Name')['KM'].sum().reset_index()
     runner_summary = runner_summary.sort_values('KM', ascending=False)
     
-    # NEU: Highlighting des ausgewählten Läufers
+    # Highlighting des ausgewählten Läufers
     runner_summary['Color'] = runner_summary['Name'].apply(
         lambda x: PRIMARY_COLOR if x == selected_runner else SECONDARY_BACKGROUND_COLOR
     )
@@ -351,7 +352,7 @@ if 'Name' in df.columns:
         title=f"Einzelwertungen ({ranking_period})",
         color='Color',
         color_discrete_map='identity', 
-        template="plotly_white" # NEU: Moderneres Theme
+        template="plotly_white"
     )
 
     fig_runner.update_layout(
@@ -379,15 +380,12 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ==============================================================================
-# 8. BESTENLISTEN (LEADERBOARDS) - NEU: PROGRESS BARS
+# 8. BESTENLISTEN (LEADERBOARDS) - PROGRESS BARS
 # ==============================================================================
 
 if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
     st.subheader(f"Aktuelle Bestenlisten ({ranking_period})")
     leaderboard_col1, leaderboard_col2 = st.columns(2)
-    
-    # Finde den höchsten Wert für die Progress Bars (visueller max-Wert)
-    max_km_for_progress = df_filtered['KM'].sum() if not df_filtered.empty else 100
 
     # 1. Gruppen-Bestenliste (Team Leaderboard)
     if 'Gruppe' in df_filtered.columns:
@@ -396,7 +394,6 @@ if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
         group_ranking = group_ranking.sort_values('Gesamt-KM', ascending=False).reset_index(drop=True)
         group_ranking.index = group_ranking.index + 1 
         
-        # Berechnung des visuellen Max-Wertes für Gruppen
         max_group_km = group_ranking['Gesamt-KM'].max() if not group_ranking.empty else 100
         
         with leaderboard_col1:
@@ -409,9 +406,8 @@ if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
                         "KM", 
                         format="%.1f km", 
                         min_value=0, 
-                        max_value=max_group_km, # Dynamisches Max-Value
+                        max_value=max_group_km, 
                         width='large', 
-                        # NEU: Farbe auf PRIMARY_COLOR setzen
                         color=PRIMARY_COLOR
                     ),
                 },
@@ -427,7 +423,6 @@ if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
         runner_ranking = runner_ranking.head(10)
         runner_ranking.index = runner_ranking.index + 1 
         
-        # Berechnung des visuellen Max-Wertes für Einzelwerte
         max_runner_km = runner_ranking['Gesamt-KM'].max() if not runner_ranking.empty else 100
         
         with leaderboard_col2:
@@ -440,9 +435,8 @@ if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
                         "KM", 
                         format="%.1f km", 
                         min_value=0, 
-                        max_value=max_runner_km, # Dynamisches Max-Value
+                        max_value=max_runner_km, 
                         width='large',
-                        # NEU: Farbe auf PRIMARY_COLOR setzen
                         color=PRIMARY_COLOR
                     ),
                 },
@@ -452,7 +446,7 @@ if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
 st.markdown("<br>", unsafe_allow_html=True) 
 
 # ==============================================================================
-# 9. Diagramm: KW-Entwicklung (KW-Filter wird ignoriert, alle KWs sichtbar)
+# 9. Diagramm: KW-Entwicklung
 # ==============================================================================
 
 st.subheader("9. Kilometer-Entwicklung pro Kalenderwoche (KW)")
@@ -485,7 +479,7 @@ fig_kw = px.bar(
     title=f'Gesamt-KM pro Kalenderwoche für {filter_label} (Gesamtübersicht)',
     labels={'Wochen-KM': 'KM', 'KW_STR': 'Kalenderwoche'},
     color_discrete_sequence=[PRIMARY_COLOR],
-    template="plotly_white" # NEU: Moderneres Theme
+    template="plotly_white"
 )
 
 fig_kw.update_layout(
@@ -502,19 +496,14 @@ st.plotly_chart(fig_kw, use_container_width=True)
 st.markdown("<br>", unsafe_allow_html=True) 
 
 # ==============================================================================
-# 10. DIAGRAMM: Kumulierte Gruppen-Entwicklung (Liniendiagramm) - NEU: HIGHLIGHTING
+# 10. DIAGRAMM: Kumulierte Gruppen-Entwicklung (Liniendiagramm) - HIGHLIGHTING
 # ==============================================================================
 
 if not group_weekly.empty:
     st.subheader("10. Gruppen-Wettbewerb: Kumulierte Kilometer-Entwicklung (Statisch)")
     
-    # NEU: Farbzuweisung für Highlighting
-    # Dämpfung der nicht gewählten Linien
-    colors = [PRIMARY_COLOR if g == selected_group else 'lightgrey' for g in group_weekly['Gruppe'].unique()]
-    
-    # Stelle sicher, dass die ausgewählte Gruppe die richtige Farbe hat
+    # Farbzuweisung für Highlighting
     if selected_group != 'Alle' and selected_group in group_weekly['Gruppe'].unique():
-        # Wenn eine Gruppe ausgewählt ist, wird nur diese farbig, der Rest grau
         color_map = {g: PRIMARY_COLOR if g == selected_group else 'lightgrey' for g in group_weekly['Gruppe'].unique()}
     else:
         # Wenn "Alle" gewählt, verwende Standard-Farbpalette
@@ -529,11 +518,11 @@ if not group_weekly.empty:
         markers=True,
         title='Kumulierte Gruppen-KM nach Kalenderwoche (Gesamt)',
         labels={'Kumulierte_KM': 'Kumulierte KM', 'KW_STR': 'Kalenderwoche', 'Gruppe': 'Gruppe'},
-        color_discrete_map=color_map, # NEU: Highlighting
-        template="plotly_white" # NEU: Moderneres Theme
+        color_discrete_map=color_map, 
+        template="plotly_white" 
     )
     
-    # NEU: Anpassung der Linienstärke für die ausgewählte Gruppe
+    # Anpassung der Linienstärke für die ausgewählte Gruppe
     if selected_group != 'Alle':
         for i, trace in enumerate(fig_group_cum.data):
             if trace.name == selected_group:
@@ -541,7 +530,7 @@ if not group_weekly.empty:
                 trace.marker.size = 10
             else:
                 trace.line.width = 1.5
-                trace.line.dash = 'dot' # Gestreift für gedämpfte Linien
+                trace.line.dash = 'dot' 
                 trace.marker.size = 5
 
 
@@ -565,5 +554,4 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ==============================================================================
 
 st.subheader(f"Detailübersicht (Gefilterte Daten)")
-
 st.dataframe(df_filtered, use_container_width=True, hide_index=True)
