@@ -26,15 +26,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
+# ... (Teil von Abschnitt 0)
 # Google Sheets Zugangsdaten
 SHEET_ID = "1z-mPq_eqFDQvMA-sZ6TkDoPN-x8FTCu2brWd1PkHO3I"
 WORKSHEET_NAME = "Laufdaten" 
-JSON_PATH = "fifth-honor-479711-n7-c0648bdb7289.json" 
-
-# Zeitstempel der letzten Datenladung
-LAST_LOAD_TIME = datetime.now().strftime("%d.%m.%Y, %H:%M Uhr")
-
+# JSON_PATH = "fifth-honor-479711-n7-c0648bdb7289.json" # DIESE ZEILE ENTFERNEN ODER AUSKOMMENTIEREN
 
 # ==============================================================================
 # 1. DATEN LADEN (Caching & gspread)
@@ -42,10 +38,24 @@ LAST_LOAD_TIME = datetime.now().strftime("%d.%m.%Y, %H:%M Uhr")
 
 @st.cache_data(ttl=300)
 def load_data():
-    """Lädt Daten aus Google Sheets über gspread und JSON-Key."""
+    """Lädt Daten aus Google Sheets über gspread und JSON-Key (jetzt aus Streamlit Secrets)."""
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(JSON_PATH, 
-                                                                  ['https://www.googleapis.com/auth/spreadsheets'])
+        # Importiere die notwendige Bibliothek innerhalb der Funktion für die Cloud
+        from oauth2client.service_account import ServiceAccountCredentials
+        import json
+        
+        # Sicherstellen, dass die Keys in den Secrets vorhanden sind
+        if 'gcp_service_account' not in st.secrets:
+             st.error("❌ Die Secrets für den Google Service Account wurden nicht gefunden. Bitte überprüfen Sie die Streamlit Secrets Box.")
+             st.stop()
+             
+        # Erstelle ein Credential-Objekt direkt aus den Secrets
+        creds_info = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_info, 
+            ['https://www.googleapis.com/auth/spreadsheets']
+        )
+        
         client = gspread.authorize(creds)
         sheet = client.open_by_key(SHEET_ID)
         worksheet = sheet.worksheet(WORKSHEET_NAME)
@@ -53,8 +63,7 @@ def load_data():
         df = pd.DataFrame(data)
         return df
     except Exception as e:
-        st.error("❌ Ein Fehler ist beim Laden der Daten aufgetreten. Bitte JSON-Pfad oder Freigabe prüfen.")
-        st.error("Stellen Sie sicher, dass Ihre `secrets.toml` korrekt ist und der Service-Account Lesezugriff hat.")
+        st.error("❌ Ein Fehler ist beim Laden der Daten aufgetreten. Haben Sie die Sheets-ID und die Secrets korrekt hinterlegt?")
         st.exception(e)
         st.stop()
 
@@ -556,4 +565,5 @@ st.markdown("<br>", unsafe_allow_html=True)
 # ==============================================================================
 
 st.subheader(f"Detailübersicht (Gefilterte Daten)")
+
 st.dataframe(df_filtered, use_container_width=True, hide_index=True)
