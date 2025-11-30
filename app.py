@@ -40,7 +40,7 @@ LAST_LOAD_TIME = datetime.now().strftime("%d.%m.%Y, %H:%M Uhr")
 # 1. DATEN LADEN (Caching & gspread) - ANGEPASST FÜR STREAMLIT SECRETS
 # ==============================================================================
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=86400)
 def load_data():
     """Lädt Daten aus Google Sheets über gspread und JSON-Key (jetzt aus Streamlit Secrets)."""
     try:
@@ -555,3 +555,4 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 st.subheader(f"Detailübersicht (Gefilterte Daten)")
 st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+
