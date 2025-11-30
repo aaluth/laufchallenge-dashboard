@@ -1,0 +1,6 @@
+# requirements.txt
+streamlit
+pandas
+plotly
+gspread
+oauth2client
