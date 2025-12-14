@@ -1,20 +1,21 @@
 import streamlit as st
 import pandas as pd
-import gspread
+import json
+import gspread 
+from oauth2client.service_account import ServiceAccountCredentials
 import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime
-import pytz
+import plotly.graph_objects as go 
+from datetime import datetime 
 
 # ==============================================================================
 # 0. KONFIGURATION & GLOBALE VARIABLEN
 # ==============================================================================
 
 # Branding-Farben des Suchsdorfer SV
-PRIMARY_COLOR = "#002060"
-TEXT_COLOR = "#212121"
-BACKGROUND_COLOR = "#FFFFFF"
-SECONDARY_BACKGROUND_COLOR = "#F0F2F6"
+PRIMARY_COLOR = "#002060"  
+TEXT_COLOR = "#212121"    
+BACKGROUND_COLOR = "#FFFFFF" 
+SECONDARY_BACKGROUND_COLOR = "#F0F2F6" 
 
 # Challenge Zeitraum KWs
 CHALLENGE_KWS = [51, 52, 1, 2, 3, 4, 5, 6, 7]
@@ -26,145 +27,102 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Google Sheets Konfiguration (Zugriff auf Streamlit Secrets)
-try:
-    SHEET_ID = st.secrets.sheet_id
-except AttributeError:
-    st.error("FEHLER: Konfigurationsschlüssel 'sheet_id' fehlt in Streamlit Secrets.")
-    st.stop()
-    
-WORKSHEET_NAME = "Laufdaten" # Sheet für die eingetragenen Läufe
+# Google Sheets Zugangsdaten
+SHEET_ID = "1z-mPq_eqFDQvMA-sZ6TkDoPN-x8FTCu2brWd1PkHO3I"
+WORKSHEET_NAME = "Laufdaten" 
+# JSON_PATH wurde entfernt, da wir Streamlit Secrets verwenden
 
-# Zeitzonen- und Zeitstempel-Konfiguration
-TIMEZONE = pytz.timezone('Europe/Berlin')
-LAST_LOAD_TIME = datetime.now(TIMEZONE).strftime("%d.%m.%Y, %H:%M Uhr")
-
-# Initialisierung des gspread-Clients
-try:
-    gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-except Exception as e:
-    st.error(f"Fehler beim Initialisieren des Google Sheets Clients: {e}")
-    st.stop()
+# Zeitstempel der letzten Datenladung (Wichtig: Global definiert zur Behebung des NameError)
+LAST_LOAD_TIME = datetime.now().strftime("%d.%m.%Y, %H:%M Uhr")
 
 
 # ==============================================================================
-# 1. DATEN LADEN (Caching & gspread) - NEUE LOGIK FÜR 2 SHEETS (Teilnehmer & Laufdaten)
+# 1. DATEN LADEN (Caching & gspread) - ANGEPASST FÜR STREAMLIT SECRETS
 # ==============================================================================
 
 @st.cache_data(ttl=86400)
 def load_data():
-    """
-    Lädt die Teilnehmerliste und die Laufdaten.
-    Gibt beide DataFrames zurück.
-    """
-    
-    # 1. TEILNEHMERLISTE LADEN ('Teilnehmer' Sheet)
+    """Lädt Daten aus Google Sheets über gspread und JSON-Key (jetzt aus Streamlit Secrets)."""
     try:
-        wks_teilnehmer = gc.open_by_key(SHEET_ID).worksheet("Teilnehmer")
-        df_teilnehmer = pd.DataFrame(wks_teilnehmer.get_all_records())
+        # Sicherstellen, dass die Keys in den Secrets vorhanden sind
+        if 'gcp_service_account' not in st.secrets:
+             st.error("❌ Die Secrets für den Google Service Account wurden nicht gefunden. Bitte überprüfen Sie die Streamlit Secrets Box.")
+             st.stop()
+             
+        # Erstelle ein Credential-Objekt direkt aus den Secrets (wichtig: from_json_keyfile_dict verwenden)
+        creds_info = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_info, 
+            ['https://www.googleapis.com/auth/spreadsheets']
+        )
         
-        if 'Name' not in df_teilnehmer.columns or 'Gruppe' not in df_teilnehmer.columns:
-            st.error("Fehler: Das 'Teilnehmer'-Sheet muss die Spalten 'Name' und 'Gruppe' enthalten.")
-            return pd.DataFrame(), pd.DataFrame() 
-            
+        client = gspread.authorize(creds)
+        sheet = client.open_by_key(SHEET_ID)
+        worksheet = sheet.worksheet(WORKSHEET_NAME)
+        data = worksheet.get_all_records()
+        df = pd.DataFrame(data)
+        return df
     except Exception as e:
-        st.error(f"Fehler beim Laden der Teilnehmerliste (Sheet 'Teilnehmer'). {e}")
-        return pd.DataFrame(), pd.DataFrame()
-
-    # 2. LAUFDATEN LADEN ('Laufdaten' Sheet)
-    try:
-        wks_laufdaten = gc.open_by_key(SHEET_ID).worksheet(WORKSHEET_NAME) 
-        df_laufdaten = pd.DataFrame(wks_laufdaten.get_all_records())
-        
-    except Exception as e:
-        st.warning(f"Warnung: Fehler beim Laden der Laufdaten (Sheet '{WORKSHEET_NAME}'). Führe mit leeren Laufdaten fort: {e}")
-        df_laufdaten = pd.DataFrame({'Name': [], 'KM': []})
-
-    return df_teilnehmer, df_laufdaten 
-
-# Ende der load_data Funktion
-
+        st.error("❌ Ein Fehler ist beim Laden der Daten aufgetreten. Haben Sie die Sheets-ID korrekt hinterlegt und den Service Account zum Google Sheet hinzugefügt?")
+        st.exception(e)
+        st.stop()
 
 # ==============================================================================
-# 2. DATEN VORBEREITEN & BEREINIGEN (Erweiterte Transformation)
+# 2. DATEN VORBEREITEN & BEREINIGEN
 # ==============================================================================
 
 @st.cache_data
-def transform_data(df_teilnehmer, df_laufdaten):
-    """Konvertiert Datentypen, berechnet Aggregationen und führt die Daten zusammen."""
+def transform_data(df):
+    """Konvertiert Datentypen und berechnet Aggregationen."""
+    df.columns = [col.strip() for col in df.columns]
     
-    # 1. Laufdaten bereinigen (df_runs)
-    df_runs = df_laufdaten.copy()
-    df_runs.columns = [col.strip() for col in df_runs.columns]
-    
-    if 'KM' not in df_runs.columns:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    if 'KM' not in df.columns:
+        st.error("Spalte 'KM' nicht in der Google Tabelle gefunden.")
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame() 
         
-    df_runs['KM'] = pd.to_numeric(df_runs['KM'], errors='coerce').fillna(0)
-    df_runs['Datum'] = pd.to_datetime(df_runs['Datum'], format='%d.%m.%Y', errors='coerce')
-    
-    # KW behandeln (entweder aus Sheet oder berechnet)
-    try:
-        df_runs['KW'] = pd.to_numeric(df_runs['KW'], errors='coerce', downcast='integer')
-        df_runs['KW_STR'] = df_runs['KW'].astype(str)
-    except KeyError:
-        # Fallback: KW aus Datum berechnen
-        df_runs['KW'] = df_runs['Datum'].dt.isocalendar().week.astype('Int64')
-        df_runs['KW_STR'] = df_runs['KW'].astype(str)
-        
-    # Laufdaten um Gruppenzugehörigkeit erweitern (wichtig für Filter)
-    df_runs = pd.merge(df_runs, df_teilnehmer[['Name', 'Gruppe']], on='Name', how='left')
-    
-    # Filtern nach Challenge-KW (optional, wenn Sie nur die KWs der Challenge sehen wollen)
-    df_runs = df_runs[df_runs['KW_STR'].isin(CHALLENGE_KWS_STR)].copy()
-
-
-    # 2. Zusammenführen der Teilnehmer (df_merged_gesamt für 0-KM-Läufer)
-    df_summe_km = df_runs.groupby('Name', as_index=False)['KM'].sum()
-    
-    # Left-Join, um alle Teilnehmer aus der Liste zu behalten
-    df_merged_gesamt = pd.merge(df_teilnehmer, df_summe_km, on='Name', how='left')
-    df_merged_gesamt['KM'] = df_merged_gesamt['KM'].fillna(0) # 0-KM-Läufer bekommen 0 KM
+    df['KM'] = pd.to_numeric(df['KM'], errors='coerce')
+    df['Datum'] = pd.to_datetime(df['Datum'], format='%d.%m.%Y', errors='coerce')
+    df['KW'] = pd.to_numeric(df['KW'], errors='coerce', downcast='integer')
+    df['KW_STR'] = df['KW'].astype(str)
     
     # ----------------------------------------------------------------------
-    # 3. Aggregation für KW-Diagramm (Gesamt)
+    # 1. Aggregation für KW-Diagramm (Gesamt)
     # ----------------------------------------------------------------------
-    weekly_summary = df_runs.groupby('KW_STR')['KM'].sum().reset_index()
+    weekly_summary = df.groupby('KW_STR')['KM'].sum().reset_index()
     weekly_summary.rename(columns={'KM': 'Wochen-KM'}, inplace=True)
     
     # ----------------------------------------------------------------------
-    # 4. Aggregation und KUMULIERUNG für Gruppen-Diagramm (STATISCHE DATEN)
+    # 2. Aggregation und KUMULIERUNG für Gruppen-Diagramm (STATISCHE DATEN)
     # ----------------------------------------------------------------------
-    group_weekly = pd.DataFrame() 
-    if 'Gruppe' in df_runs.columns:
-        
-        # Setze die KW_STR Spalte als geordnete Kategorie für die Kumulierung
-        df_runs['KW_STR'] = pd.Categorical(
-            df_runs['KW_STR'], 
+    if 'Gruppe' in df.columns:
+        df_filtered_kws = df[df['KW_STR'].isin(CHALLENGE_KWS_STR)].copy() 
+
+        # KORREKTUR: Setze die KW_STR Spalte als geordnete Kategorie
+        df_filtered_kws['KW_STR'] = pd.Categorical(
+            df_filtered_kws['KW_STR'], 
             categories=CHALLENGE_KWS_STR,
             ordered=True
         )
 
-        # Wöchentliche KM pro Gruppe
-        group_weekly = df_runs.groupby(['Gruppe', 'KW_STR'], observed=True)['KM'].sum().reset_index()
+        # 1. Wöchentliche KM pro Gruppe
+        group_weekly = df_filtered_kws.groupby(['Gruppe', 'KW_STR'], observed=True)['KM'].sum().reset_index()
         
-        # Kumuliere die KM pro Gruppe
+        # 2. Sortiere nach Gruppe und dann nach der korrekten kategorialen KW_STR
+        group_weekly = group_weekly.sort_values(['Gruppe', 'KW_STR'])
+        
+        # 3. Kumuliere die KM pro Gruppe
         group_weekly['Kumulierte_KM'] = group_weekly.groupby('Gruppe')['KM'].cumsum()
-    
+    else:
+        group_weekly = pd.DataFrame()
 
-    # df_runs: Laufdaten (für KW-Chart, gefiltert nach Challenge-KW)
-    # df_merged_gesamt: Aggregierte Gesamt-KM pro Name (inkl. 0-KM-Läufer)
-    return df_runs, weekly_summary, group_weekly, df_merged_gesamt
+    return df, weekly_summary, group_weekly
 
-# Daten laden und transformieren
-df_teilnehmer_raw, df_laufdaten_raw = load_data()
-df, weekly_summary, group_weekly, df_merged_gesamt = transform_data(df_teilnehmer_raw, df_laufdaten_raw)
+df_raw = load_data()
+df, weekly_summary, group_weekly = transform_data(df_raw)
 
-# Sicherheits-Check
-if df_merged_gesamt.empty:
-    st.info("Keine gültigen Laufdaten zur Visualisierung gefunden (Prüfen Sie Sheets und Spaltennamen).")
+if df.empty or df['KM'].sum() == 0:
+    st.info("Keine gültigen Laufdaten zur Visualisierung gefunden.")
     st.stop()
-
 
 # ==============================================================================
 # 3. DASHBOARD VISUALISIERUNG & FILTER
@@ -183,35 +141,53 @@ with st.sidebar:
     st.markdown("---")
     st.subheader("Filter")
 
-    # 1. Gruppen-Filter (basiert auf allen Teilnehmern)
+    df_filtered = df.copy() # Kopie des gesamten Datensatzes für Filterung
+
+    # 1. Gruppen-Filter (Wird für df_filtered angewendet)
     selected_group = 'Alle'
-    if 'Gruppe' in df_merged_gesamt.columns:
-        groups = df_merged_gesamt['Gruppe'].unique()
+    if 'Gruppe' in df.columns:
+        groups = df['Gruppe'].unique()
         selected_group = st.selectbox("1. Wähle Gruppe", ['Alle'] + sorted(list(groups)))
 
-    # 2. Personen-Filter (basiert auf der gefilterten Gruppe)
-    selected_runner = 'Alle'
-    if 'Name' in df_merged_gesamt.columns:
-        # Filterung der Namen basierend auf der ausgewählten Gruppe
         if selected_group != 'Alle':
-            runners_in_group = df_merged_gesamt[df_merged_gesamt['Gruppe'] == selected_group]['Name'].unique()
-        else:
-            runners_in_group = df_merged_gesamt['Name'].unique()
-            
-        selected_runner = st.selectbox("2. Wähle Name", ['Alle'] + sorted(list(runners_in_group)))
+            df_filtered = df_filtered[df_filtered['Gruppe'] == selected_group].copy() 
 
-    # 3. KW-Filter (für Bestenlisten/Detailtabelle)
-    selected_kw = 'Gesamt'
-    kw_options = ['Gesamt'] + CHALLENGE_KWS
+    # 2. Personen-Filter (Wird für df_filtered angewendet)
+    selected_runner = 'Alle'
+    if 'Name' in df_filtered.columns: 
+        runners = df_filtered['Name'].unique()
+        selected_runner = st.selectbox("2. Wähle Name", ['Alle'] + sorted(list(runners))) 
+
+        if selected_runner != 'Alle':
+            df_filtered = df_filtered[df_filtered['Name'] == selected_runner].copy()
         
-    selected_kw = st.selectbox(
-        "3. Wähle Kalenderwoche (KW) für Bestenlisten",
-        options=kw_options,
-        index=0
-    )
+    # 3. KW-Filter (Wird für df_filtered angewendet)
+    selected_kw = 'Gesamt'
+    if 'KW' in df_filtered.columns:
+        kw_options = ['Gesamt'] + CHALLENGE_KWS
+        
+        selected_kw = st.selectbox(
+            "3. Wähle Kalenderwoche (KW)",
+            options=kw_options,
+            index=0
+        )
 
-ranking_period = selected_kw if selected_kw != 'Gesamt' else 'Gesamt'
-
+        # Anwendung des KW-Filters auf df_filtered (für Bestenlisten und Detailtabelle)
+        if selected_kw != 'Gesamt':
+            df_filtered = df_filtered[df_filtered['KW'] == selected_kw]
+        
+        weekly_summary_filtered = df_filtered.groupby('KW_STR')['KM'].sum().reset_index()
+        weekly_summary_filtered.rename(columns={'KM': 'Wochen-KM'}, inplace=True)
+        
+        weekly_summary_filtered['KW_STR'] = pd.Categorical(
+            weekly_summary_filtered['KW_STR'], 
+            categories=CHALLENGE_KWS_STR,
+            ordered=True
+        )
+        weekly_summary_filtered = weekly_summary_filtered.dropna(subset=['KW_STR']).sort_values('KW_STR')
+        
+    else:
+        weekly_summary_filtered = weekly_summary.copy()
 
 # ==============================================================================
 # 4. HAUPTBEREICH DES DASHBOARDS
@@ -221,15 +197,15 @@ st.markdown(
     f"""<h1 style='color: {PRIMARY_COLOR};'>Laufchallenge Übersicht</h1>""", 
     unsafe_allow_html=True
 )
-st.caption(f"Letzte Aktualisierung der Daten: **{LAST_LOAD_TIME}**") 
+st.caption(f"Letzte Aktualisierung der Daten: **{LAST_LOAD_TIME}**") # KORRIGIERT: LAST_LOAD_TIME ist jetzt global
 
 # --- 4. Metriken (Fortschritt) ---
 with st.container(border=True):
     st.markdown(f"<h4 style='color: {PRIMARY_COLOR};'>🚀 Aktueller Fortschritt (Gesamt)</h4>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     
-    gesamt_km_total = df_merged_gesamt['KM'].sum() # KM aller Teilnehmer (inkl. 0)
-    anzahl_läufe_total = df.shape[0] # Anzahl Läufe basiert auf dem reinen Laufdaten-Sheet
+    gesamt_km_total = df['KM'].sum()
+    anzahl_läufe_total = df.shape[0]
 
     col1.metric(
         label="Gesamt-KM", 
@@ -241,10 +217,10 @@ with st.container(border=True):
         value=f"{anzahl_läufe_total}",
         help="Gesamtzahl aller gemeldeten Laufeinheiten."
     )
-    if 'Gruppe' in df_merged_gesamt.columns:
+    if 'Gruppe' in df.columns:
         col3.metric(
             label="Anzahl Gruppen", 
-            value=df_merged_gesamt['Gruppe'].nunique(),
+            value=df['Gruppe'].nunique(),
             help="Anzahl der Teams, die an der Challenge teilnehmen."
         )
 
@@ -254,8 +230,8 @@ st.markdown("<br>", unsafe_allow_html=True)
 # 5. REKORDE & BESTLEISTUNGEN (STATISCH)
 # ==============================================================================
 
-if 'Name' in df.columns and not df.empty:
-    with st.container(border=True):
+if 'Name' in df.columns:
+    with st.container(border=True): # Einheitlicher Rahmen
         st.markdown(f"<h4 style='color: {PRIMARY_COLOR};'>👑 Rekorde & Bestleistungen</h4>", unsafe_allow_html=True)
         record_col1, record_col2 = st.columns(2)
 
@@ -263,8 +239,7 @@ if 'Name' in df.columns and not df.empty:
         max_km_entry = df.loc[df['KM'].idxmax()]
         max_km = max_km_entry['KM']
         max_km_runner = max_km_entry['Name']
-        
-        max_km_date = max_km_entry['Datum'].strftime('%d.%m.') if pd.notna(max_km_entry['Datum']) else "Datum unbekannt"
+        max_km_date = max_km_entry['Datum'].strftime('%d.%m.')
         
         with record_col1:
             st.metric(
@@ -296,33 +271,24 @@ st.markdown("---")
 # 6. DIAGRAMM: Gruppen-KM-Vergleich 
 # ==============================================================================
 
-if 'Gruppe' in df_merged_gesamt.columns:
+ranking_period = selected_kw if selected_kw != 'Gesamt' else 'Gesamt' 
+
+if 'Gruppe' in df.columns:
     st.subheader(f"Gruppen-KM-Vergleich ({ranking_period})")
 
-    # Basisdaten: Hängt davon ab, ob der KW-Filter auf 'Gesamt' steht oder nicht
-    if selected_kw == 'Gesamt':
-        # Verwende die bereits aggregierten Gesamt-KM aus dem Merge-DF
-        group_bar_data = df_merged_gesamt.groupby('Gruppe')['KM'].sum().reset_index()
+    df_base = df.copy()
+    all_groups = sorted(list(df['Gruppe'].unique())) 
+
+    if selected_kw != 'Gesamt':
+        df_base = df_base[df_base['KW'] == selected_kw]
+
+    if not df_base.empty:
+        group_bar_data = df_base.groupby('Gruppe')['KM'].sum()
+        group_bar_data = group_bar_data.reindex(all_groups, fill_value=0).reset_index()
         group_bar_data.columns = ['Gruppe', 'KM']
+        group_bar_data = group_bar_data.sort_values('KM', ascending=False)
     else:
-        # Filterung auf Basis der tatsächlichen Läufe (df) und erneutes Aggregieren
-        df_base = df[df['KW'] == selected_kw].copy()
-        group_bar_data = df_base.groupby('Gruppe')['KM'].sum().reset_index()
-        group_bar_data.columns = ['Gruppe', 'KM']
-        
-        # Stelle sicher, dass Gruppen mit 0 KM in dieser KW angezeigt werden
-        all_groups = df_merged_gesamt['Gruppe'].unique()
-        group_bar_data = group_bar_data.merge(
-            pd.DataFrame({'Gruppe': all_groups}), 
-            on='Gruppe', 
-            how='right'
-        ).fillna({'KM': 0})
-        
-    # Anwenden des Gruppen-Filters aus der Sidebar auf die Chart-Daten
-    if selected_group != 'Alle':
-        group_bar_data = group_bar_data[group_bar_data['Gruppe'] == selected_group].copy()
-        
-    group_bar_data = group_bar_data.sort_values('KM', ascending=False)
+        group_bar_data = pd.DataFrame({'Gruppe': all_groups, 'KM': 0})
     
     # Highlighting der ausgewählten Gruppe
     group_bar_data['Color'] = group_bar_data['Gruppe'].apply(
@@ -360,38 +326,17 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 st.subheader(f"Einzelwertung: Kilometer-Vergleich nach Name ({ranking_period})")
 
-if 'Name' in df_merged_gesamt.columns:
-    
-    # Basisdaten: df_merged_gesamt enthält alle Läufer und deren Gesamt-KM (wird bei KW != Gesamt überschrieben)
-    df_base_runner = df_merged_gesamt.copy()
-    
-    # KW-Filter anwenden (Wenn nicht 'Gesamt', müssen wir neu aggregieren)
-    if selected_kw != 'Gesamt':
-        # 1. Filtern der tatsächlichen Läufe (df)
-        df_runs_kw = df[df['KW'] == selected_kw].copy()
-        
-        # 2. Aggregieren der KM für diese KW
-        runner_summary_kw = df_runs_kw.groupby('Name')['KM'].sum().reset_index()
-        runner_summary_kw.columns = ['Name', 'KM_KW']
-        
-        # 3. Mergen mit der kompletten Teilnehmerliste (um 0-KM-Läufer anzuzeigen)
-        df_base_runner = df_merged_gesamt[['Name', 'Gruppe']].merge(runner_summary_kw, on='Name', how='left').fillna({'KM_KW': 0})
-        
-        # Spaltennamen anpassen
-        df_base_runner = df_base_runner.rename(columns={'KM_KW': 'KM'})
-    else:
-        # Wenn 'Gesamt', verwenden wir die Gesamt-KM aus dem Merge-DF
-        df_base_runner = df_base_runner.rename(columns={'KM': 'KM'})
+if 'Name' in df.columns:
+    df_base_runner = df.copy()
 
-    # Gruppen-Filter anwenden (kommt aus der Sidebar)
     if selected_group != 'Alle':
         df_base_runner = df_base_runner[df_base_runner['Gruppe'] == selected_group].copy()
-
-    # Person-Filter anwenden (wenn Name ausgewählt wurde)
-    if selected_runner != 'Alle':
-        df_base_runner = df_base_runner[df_base_runner['Name'] == selected_runner].copy()
-
-    runner_summary = df_base_runner[['Name', 'KM']].sort_values('KM', ascending=False)
+    
+    if selected_kw != 'Gesamt':
+        df_base_runner = df_base_runner[df_base_runner['KW'] == selected_kw].copy()
+    
+    runner_summary = df_base_runner.groupby('Name')['KM'].sum().reset_index()
+    runner_summary = runner_summary.sort_values('KM', ascending=False)
     
     # Highlighting des ausgewählten Läufers
     runner_summary['Color'] = runner_summary['Name'].apply(
@@ -433,37 +378,19 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True) 
 
+
 # ==============================================================================
 # 8. BESTENLISTEN (LEADERBOARDS) - PROGRESS BARS
 # ==============================================================================
 
-if 'Gruppe' in df_merged_gesamt.columns or 'Name' in df_merged_gesamt.columns:
+if 'Gruppe' in df_filtered.columns or 'Name' in df_filtered.columns:
     st.subheader(f"Aktuelle Bestenlisten ({ranking_period})")
     leaderboard_col1, leaderboard_col2 = st.columns(2)
 
-    # Basisdaten für die Bestenlisten (abhängig vom KW-Filter)
-    if selected_kw == 'Gesamt':
-        # Verwende die aggregierte Gesamtansicht
-        df_leaderboard = df_merged_gesamt.rename(columns={'KM': 'Gesamt-KM'})
-    else:
-        # Führe Aggregation für die spezifische KW durch
-        df_runs_kw = df[df['KW'] == selected_kw].copy()
-        runner_summary_kw = df_runs_kw.groupby('Name')['KM'].sum().reset_index()
-        runner_summary_kw.columns = ['Name', 'Gesamt-KM']
-        
-        # Mergen mit der kompletten Teilnehmerliste (um 0-KM-Läufer in dieser KW anzuzeigen)
-        df_leaderboard = df_merged_gesamt[['Name', 'Gruppe']].merge(runner_summary_kw, on='Name', how='left').fillna({'Gesamt-KM': 0})
-
-
     # 1. Gruppen-Bestenliste (Team Leaderboard)
-    if 'Gruppe' in df_leaderboard.columns:
-        
-        group_ranking = df_leaderboard.groupby('Gruppe')['Gesamt-KM'].sum().reset_index()
-        
-        # Gruppenfilter aus Sidebar anwenden
-        if selected_group != 'Alle':
-            group_ranking = group_ranking[group_ranking['Gruppe'] == selected_group]
-
+    if 'Gruppe' in df_filtered.columns:
+        group_ranking = df_filtered.groupby('Gruppe')['KM'].sum().reset_index()
+        group_ranking.columns = ['Gruppe', 'Gesamt-KM']
         group_ranking = group_ranking.sort_values('Gesamt-KM', ascending=False).reset_index(drop=True)
         group_ranking.index = group_ranking.index + 1 
         
@@ -488,17 +415,9 @@ if 'Gruppe' in df_merged_gesamt.columns or 'Name' in df_merged_gesamt.columns:
             )
 
     # 2. Name-Bestenliste (Runner Leaderboard)
-    if 'Name' in df_leaderboard.columns:
-        
-        runner_ranking = df_leaderboard[['Name', 'Gesamt-KM']].copy()
-        
-        # Filter anwenden
-        if selected_group != 'Alle':
-            runner_ranking = df_leaderboard[df_leaderboard['Gruppe'] == selected_group][['Name', 'Gesamt-KM']]
-        if selected_runner != 'Alle':
-            runner_ranking = runner_ranking[runner_ranking['Name'] == selected_runner]
-        
-        
+    if 'Name' in df_filtered.columns:
+        runner_ranking = df_filtered.groupby('Name')['KM'].sum().reset_index()
+        runner_ranking.columns = ['Name', 'Gesamt-KM']
         runner_ranking = runner_ranking.sort_values('Gesamt-KM', ascending=False).reset_index(drop=True)
         
         runner_ranking = runner_ranking.head(10)
@@ -532,10 +451,8 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 st.subheader("9. Kilometer-Entwicklung pro Kalenderwoche (KW)")
 
-# Die Basis für dieses Chart ist der ursprüngliche Lauf-DF (df)
 df_base_kw = df.copy()
 
-# Anwenden der Sidebar-Filter auf die Laufdaten (df)
 if selected_group != 'Alle':
     df_base_kw = df_base_kw[df_base_kw['Gruppe'] == selected_group].copy()
 if selected_runner != 'Alle':
@@ -631,25 +548,11 @@ if not group_weekly.empty:
 
 st.markdown("<br>", unsafe_allow_html=True) 
 
+
 # ==============================================================================
 # 11. Detailtabelle
 # ==============================================================================
 
 st.subheader(f"Detailübersicht (Gefilterte Daten)")
+st.dataframe(df_filtered, use_container_width=True, hide_index=True)
 
-# Die Detailtabelle zeigt die aggregierten Daten mit 0-KM-Läufern
-df_detail_display = df_merged_gesamt.copy()
-
-# Filter anwenden
-if selected_group != 'Alle':
-    df_detail_display = df_detail_display[df_detail_display['Gruppe'] == selected_group].copy()
-
-if selected_runner != 'Alle':
-    df_detail_display = df_detail_display[df_detail_display['Name'] == selected_runner].copy()
-
-# Die KM-Spalte ist bereits die aggregierte Gesamt-KM (oder 0)
-df_detail_display = df_detail_display.sort_values('KM', ascending=False)
-df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
-
-
-st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
