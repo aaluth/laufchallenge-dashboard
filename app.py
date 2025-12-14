@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import gspread
 import plotly.express as px
-import plotly.graph_objects as go 
-from datetime import datetime 
+import plotly.graph_objects as go
+from datetime import datetime
 import pytz # Hinzugefügt für Zeitzonen-Korrektur
 
 # ==============================================================================
@@ -722,4 +722,5 @@ df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
 
 
 st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
+
 
