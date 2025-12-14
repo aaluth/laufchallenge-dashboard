@@ -10,7 +10,7 @@ from datetime import datetime
 # ==============================================================================
 
 # Google Sheets Konfiguration
-SHEET_ID = st.secrets["sheet_id"] # Verwenden Sie den Secret Key oder Ihre ID
+SHEET_ID = st.secrets.sheet_id
 WORKSHEET_NAME = "Laufdaten"      # Sheet, das die eigentlichen Laufdaten enthält
 
 # Zeitzonen- und Zeitstempel-Konfiguration
@@ -277,3 +277,4 @@ df_display.index = df_display.index + 1 # Index beginnt bei 1
 st.dataframe(df_display, use_container_width=True)
 
 # Ende des Codes
+
