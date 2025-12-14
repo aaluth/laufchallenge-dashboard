@@ -11,10 +11,10 @@ import pytz # Hinzugefügt für Zeitzonen-Korrektur
 # ==============================================================================
 
 # Branding-Farben des Suchsdorfer SV
-PRIMARY_COLOR = "#002060"  
-TEXT_COLOR = "#212121"    
-BACKGROUND_COLOR = "#FFFFFF" 
-SECONDARY_BACKGROUND_COLOR = "#F0F2F6" 
+PRIMARY_COLOR = "#002060"
+TEXT_COLOR = "#212121"
+BACKGROUND_COLOR = "#FFFFFF"
+SECONDARY_BACKGROUND_COLOR = "#F0F2F6"
 
 # Challenge Zeitraum KWs
 CHALLENGE_KWS = [51, 52, 1, 2, 3, 4, 5, 6, 7]
@@ -722,5 +722,6 @@ df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
 
 
 st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
+
 
 
