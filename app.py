@@ -528,22 +528,40 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 st.subheader("9. Kilometer-Entwicklung pro Kalenderwoche (KW)")
 
-# Starte mit den reinen Laufdaten, da wir Läufe pro KW zählen
+# Starte mit den reinen Laufdaten (df_runs)
 df_base_kw = df_runs.copy() 
 
-# Nur fortfahren, wenn Laufdaten vorhanden sind
-if not df_base_kw.empty:
+# 1. Füge die Gruppeninformation aus der Teilnehmerliste (df_teilnehmer_raw) hinzu
+# Wir mergen mit der rohen Teilnehmerliste, um sicherzustellen, dass wir die Gruppeninfo haben.
+if not df_base_kw.empty and not df_teilnehmer_raw.empty and 'Gruppe' in df_teilnehmer_raw.columns:
     
-    # Füge die Gruppeninformation aus df_merged_gesamt hinzu, um nach Gruppe filtern zu können
-    # Wir nehmen nur Name und Gruppe, damit keine unnötigen Spalten gemerged werden
-    df_base_kw = pd.merge(df_base_kw, df_merged_gesamt[['Name', 'Gruppe']], on='Name', how='left')
+    # Merge, um Gruppe zur Lauf-Tabelle hinzuzufügen
+    df_base_kw = pd.merge(
+        df_base_kw, 
+        df_teilnehmer_raw[['Name', 'Gruppe']], 
+        on='Name', 
+        how='left'
+    )
 
     # Filter anwenden
-    if selected_group != 'Alle':
-        df_base_kw = df_base_kw[df_base_kw['Gruppe'] == selected_group].copy()
+    # Prüfe, ob die Gruppe-Spalte nach dem Merge tatsächlich existiert
+    if 'Gruppe' in df_base_kw.columns:
         
+        if selected_group != 'Alle':
+            # Entferne NaN-Gruppen (Läufe von unbekannten Personen) und filtere dann
+            df_base_kw.dropna(subset=['Gruppe'], inplace=True)
+            df_base_kw = df_base_kw[df_base_kw['Gruppe'] == selected_group].copy()
+            
+        if selected_runner != 'Alle':
+            df_base_kw = df_base_kw[df_base_kw['Name'] == selected_runner].copy()
+
+# Wenn der Merge nicht möglich war oder alle Filter angewendet wurden, aber keine Daten mehr da sind
+if df_base_kw.empty or 'Gruppe' not in df_base_kw.columns:
+    df_base_kw = df_runs.copy() # Setze auf die ungefilterten Laufdaten zurück, falls der Merge fehlschlug
+    # Nur nach Name filtern, da Gruppe nicht verfügbar ist
     if selected_runner != 'Alle':
         df_base_kw = df_base_kw[df_base_kw['Name'] == selected_runner].copy()
+
 
 filter_label = "alle Läufer"
 if selected_group != 'Alle' and selected_runner == 'Alle':
@@ -551,8 +569,7 @@ if selected_group != 'Alle' and selected_runner == 'Alle':
 elif selected_runner != 'Alle':
     filter_label = f"Name: {selected_runner}"
 
-if not df_base_kw.empty:
-    # ... Rest des Chart-Codes bleibt gleich ...
+if not df_base_kw.empty and 'KW_STR' in df_base_kw.columns:
     weekly_summary_chart = df_base_kw.groupby('KW_STR')['KM'].sum()
     weekly_summary_chart = weekly_summary_chart.reindex(CHALLENGE_KWS_STR, fill_value=0).reset_index()
     weekly_summary_chart.columns = ['KW_STR', 'Wochen-KM']
@@ -561,7 +578,6 @@ else:
     
 
 fig_kw = px.bar(
-# ... (Rest des Plotly-Codes bleibt gleich) ...
     weekly_summary_chart, 
     x='KW_STR',
     y='Wochen-KM',
@@ -668,6 +684,7 @@ df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
 
 
 st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
+
 
 
 
