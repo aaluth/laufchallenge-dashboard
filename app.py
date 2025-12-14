@@ -9,13 +9,12 @@ from datetime import datetime
 # ABSCHNITT 0: KONFIGURATION & GLOBALE VARIABLEN
 # ==============================================================================
 
-# Google Sheets Konfiguration
-SHEET_ID = st.secrets.sheet_id
+# Google Sheets Konfiguration (Annahme: Secrets sind jetzt korrekt gesetzt)
+SHEET_ID = st.secrets.sheet_id      
 WORKSHEET_NAME = "Laufdaten"      # Sheet, das die eigentlichen Laufdaten enthält
 
 # Zeitzonen- und Zeitstempel-Konfiguration
 TIMEZONE = pytz.timezone('Europe/Berlin')
-# Die Zeit wird im Server (UTC) abgerufen und sofort in die korrekte Zeitzone konvertiert
 LAST_LOAD_TIME = datetime.now(TIMEZONE).strftime("%d.%m.%Y, %H:%M Uhr")
 
 # Challenge-Ziel
@@ -38,14 +37,14 @@ except Exception as e:
 
 
 # ==============================================================================
-# ABSCHNITT 1: DATEN LADEN & VORBEREITEN (mit neuem Merge-System)
+# ABSCHNITT 1: DATEN LADEN & VORBEREITEN (NEU: Merge von Teilnehmer und Laufdaten)
 # ==============================================================================
 
-# Cache-Zeit (TTL) auf 24 Stunden (86400s) setzen, da Daten wöchentlich aktualisiert werden
 @st.cache_data(ttl=86400)
 def load_data():
     """
-    Lädt die Teilnehmerliste und die Laufdaten, führt sie zusammen und bereitet sie vor.
+    Lädt Teilnehmerliste und Laufdaten, führt sie zusammen (Left-Join) und bereitet sie vor.
+    Stellt sicher, dass 0-KM-Läufer enthalten sind.
     """
     
     # ----------------------------------------------------------------------
@@ -54,13 +53,12 @@ def load_data():
         wks_teilnehmer = gc.open_by_key(SHEET_ID).worksheet("Teilnehmer")
         df_teilnehmer = pd.DataFrame(wks_teilnehmer.get_all_records())
         
-        # Prüfung auf notwendige Spalten
         if 'Name' not in df_teilnehmer.columns or 'Gruppe' not in df_teilnehmer.columns:
             st.error("Fehler: Das 'Teilnehmer'-Sheet muss die Spalten 'Name' und 'Gruppe' enthalten.")
             return pd.DataFrame() 
             
     except Exception as e:
-        st.error(f"Fehler beim Laden der Teilnehmerliste (Sheet 'Teilnehmer'). Bitte prüfen Sie den Sheet-Namen und die Zugriffsrechte: {e}")
+        st.error(f"Fehler beim Laden der Teilnehmerliste (Sheet 'Teilnehmer'): {e}")
         return pd.DataFrame()
 
     # ----------------------------------------------------------------------
@@ -71,23 +69,19 @@ def load_data():
         
     except Exception as e:
         st.warning(f"Warnung: Fehler beim Laden der Laufdaten (Sheet '{WORKSHEET_NAME}'). Führe mit leeren Laufdaten fort: {e}")
-        # Erstellen eines leeren DF für den Merge, falls Laufdaten fehlen
         df_laufdaten = pd.DataFrame({'Name': [], 'KM': []})
 
     # ----------------------------------------------------------------------
     # 3. DATEN VORBEREITEN UND ZUSAMMENFÜHREN
     
-    # Sicherstellen, dass KM numerisch ist und fehlerhafte Einträge/Leerzeichen als 0 behandelt werden
+    # Laufdaten: KM in numerisches Format bringen, Fehler als 0 behandeln
     df_laufdaten['KM'] = pd.to_numeric(df_laufdaten.get('KM', 0), errors='coerce').fillna(0)
     
-    # Nur die Spalten 'Name' und 'KM' für die Aggregation verwenden
-    df_laufdaten = df_laufdaten[['Name', 'KM']]
-    
-    # Summe der KM pro Teilnehmer berechnen
+    # Summe der KM pro Teilnehmer berechnen (nur Name und KM sind hier wichtig)
     df_summe_km = df_laufdaten.groupby('Name', as_index=False)['KM'].sum()
 
     # Zusammenführen mit der vollständigen Teilnehmerliste (Left-Join)
-    # Behält alle Teilnehmer aus der Liste bei
+    # Behält alle Teilnehmer aus der Liste bei und fügt die Gesamt-KM hinzu.
     df = pd.merge(df_teilnehmer, df_summe_km, on='Name', how='left')
 
     # KM-Spalte für Läufer, die noch keine Daten haben, auf 0 setzen
@@ -100,18 +94,18 @@ df_raw = load_data()
 
 
 # ==============================================================================
-# ABSCHNITT 2: DATENAGGREGATIONEN
+# ABSCHNITT 2: DATENAGGREGATIONEN & PRÜFUNG
 # ==============================================================================
 
-# Überprüfung, ob überhaupt Daten geladen werden konnten (z.B. wenn Sheet-ID falsch ist)
 if df_raw.empty:
-    st.error("Fehler: Konnte keine Teilnehmerliste laden. Bitte prüfen Sie die SHEET_ID und den Namen des 'Teilnehmer'-Sheets.")
+    # st.error wird bereits in load_data() aufgerufen, aber zur Sicherheit
+    st.error("Dashboard konnte keine Daten laden. Bitte prüfen Sie Secrets und Sheet-Namen.")
     st.stop()
 
 
 # Berechne Gesamt-KM und den Fortschritt
 gesamt_km = df_raw['KM'].sum()
-fortschritt = min(gesamt_km / ZIEL_KM, 1.0) # max. 100%
+fortschritt = min(gesamt_km / ZIEL_KM, 1.0) 
 
 # Berechne die aggregierten Daten für die Charts
 df_gruppen = df_raw.groupby('Gruppe')['KM'].sum().reset_index()
@@ -120,7 +114,7 @@ df_gruppen = df_gruppen.sort_values(by='Gesamt-KM', ascending=False)
 
 
 # ==============================================================================
-# ABSCHNITT 3: DASHBOARD-LAYOUT
+# ABSCHNITT 3: DASHBOARD-LAYOUT (WIE VORHER)
 # ==============================================================================
 
 st.title("🏃 SSV Laufchallenge Dashboard")
@@ -145,6 +139,23 @@ with col_teilnehmer:
 with col_prog:
     st.metric(label="Ziel-KM", value=f"{ZIEL_KM:,} KM")
     st.progress(fortschritt, text=f"**{fortschritt*100:.1f}%** des Ziels erreicht ({gesamt_km:,.1f} von {ZIEL_KM:,} KM)")
+
+
+# ----------------------------------------------------------------------
+# SIDEBAR: Filter für Einzel-Ansicht
+# ----------------------------------------------------------------------
+
+st.sidebar.header("Filter & Ansicht")
+
+# Filter 1: Gruppe
+alle_gruppen = ['Alle'] + sorted(df_raw['Gruppe'].unique())
+selected_gruppe = st.sidebar.selectbox("Nach Gruppe filtern", alle_gruppen)
+
+# Filter 2: Top-Läufer
+top_n = st.sidebar.slider("Top N Läufer anzeigen", min_value=5, max_value=df_raw['Name'].nunique(), value=20)
+
+# Filter 3: 0 KM Läufer ausblenden
+hide_zero = st.sidebar.checkbox("Läufer ohne KM ausblenden", value=False)
 
 
 # ----------------------------------------------------------------------
@@ -185,32 +196,6 @@ with tab_einzel:
     st.subheader("Laufleistung pro Teilnehmer")
     
     # ----------------------------------------------------------------------
-    # SIDEBAR: Filter
-    # ----------------------------------------------------------------------
-    
-    st.sidebar.header("Filter & Ansicht")
-    
-    # Filter 1: Gruppe
-    alle_gruppen = ['Alle'] + sorted(df_raw['Gruppe'].unique())
-    selected_gruppe = st.sidebar.selectbox("Nach Gruppe filtern", alle_gruppen)
-    
-    # Filter 2: Name
-    if selected_gruppe != 'Alle':
-        df_filter = df_raw[df_raw['Gruppe'] == selected_gruppe]
-    else:
-        df_filter = df_raw.copy()
-        
-    alle_namen = ['Alle'] + sorted(df_filter['Name'].unique())
-    selected_name = st.sidebar.selectbox("Nach Name suchen", alle_namen)
-    
-    # Filter 3: Top-Läufer
-    top_n = st.sidebar.slider("Top N Läufer anzeigen", min_value=5, max_value=df_filter['Name'].nunique(), value=20)
-    
-    # Filter 4: 0 KM Läufer ausblenden
-    hide_zero = st.sidebar.checkbox("Läufer ohne KM ausblenden", value=False)
-    
-    
-    # ----------------------------------------------------------------------
     # Filter-Anwendung
     # ----------------------------------------------------------------------
     
@@ -231,10 +216,6 @@ with tab_einzel:
     if df_final.shape[0] > top_n:
         df_final = df_final.head(top_n)
 
-    # Name-Selektion
-    if selected_name != 'Alle':
-        df_final = df_raw[df_raw['Name'] == selected_name]
-        
     
     # ----------------------------------------------------------------------
     # Chart-Erstellung
@@ -277,5 +258,3 @@ df_display.index = df_display.index + 1 # Index beginnt bei 1
 st.dataframe(df_display, use_container_width=True)
 
 # Ende des Codes
-
-
