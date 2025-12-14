@@ -133,6 +133,7 @@ def transform_data(df_teilnehmer, df_laufdaten):
     weekly_summary.rename(columns={'KM': 'Wochen-KM'}, inplace=True)
     
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
     # 4. Aggregation und KUMULIERUNG für Gruppen-Diagramm 
     # ----------------------------------------------------------------------
     group_weekly = pd.DataFrame() 
@@ -141,9 +142,13 @@ def transform_data(df_teilnehmer, df_laufdaten):
     if not df_runs.empty and 'Gruppe' in df_teilnehmer.columns:
         
         # Laufdaten um Gruppenzugehörigkeit erweitern
-        # Wichtig: Die Gruppenzugehörigkeit muss von df_teilnehmer geholt werden, 
-        # da df_runs (Laufdaten) die Gruppe selbst nicht enthält.
         df_runs_with_group = pd.merge(df_runs, df_teilnehmer[['Name', 'Gruppe']], on='Name', how='left')
+        
+        # Sicherheitscheck: Falls der Merge fehlschlägt und 'Gruppe' fehlt
+        if 'Gruppe' not in df_runs_with_group.columns:
+            # Dies sollte nur passieren, wenn df_teilnehmer eine leere Gruppe-Spalte hatte,
+            # was der obige Check verhindert, aber zur Sicherheit:
+            return df_runs, weekly_summary, group_weekly, df_merged_gesamt
         
         # Entferne Läufe von Personen, die keiner Gruppe zugeordnet werden konnten (Gruppe ist NaN)
         df_runs_with_group.dropna(subset=['Gruppe'], inplace=True)
@@ -159,7 +164,6 @@ def transform_data(df_teilnehmer, df_laufdaten):
             )
 
             # Wöchentliche KM pro Gruppe
-            # observed=True ist wichtig, um nur die wirklich vorhandenen Kategorien zu verwenden
             group_weekly = df_runs_with_group.groupby(['Gruppe', 'KW_STR'], observed=True)['KM'].sum().reset_index()
             
             # Kumuliere die KM pro Gruppe
@@ -657,4 +661,5 @@ df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
 
 
 st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
+
 
