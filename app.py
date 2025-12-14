@@ -132,31 +132,39 @@ def transform_data(df_teilnehmer, df_laufdaten):
     weekly_summary = df_runs.groupby('KW_STR')['KM'].sum().reset_index()
     weekly_summary.rename(columns={'KM': 'Wochen-KM'}, inplace=True)
     
-    # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
     # 4. Aggregation und KUMULIERUNG für Gruppen-Diagramm 
     # ----------------------------------------------------------------------
     group_weekly = pd.DataFrame() 
-    if 'Gruppe' in df_runs.columns:
-        
-        # Laufdaten um Gruppenzugehörigkeit erweitern (wichtig für die Gruppen-KW-Berechnung)
-        df_runs_with_group = pd.merge(df_runs, df_teilnehmer[['Name', 'Gruppe']], on='Name', how='left')
-
-        # Setze die KW_STR Spalte als geordnete Kategorie für die Kumulierung
-        df_runs_with_group['KW_STR'] = pd.Categorical(
-            df_runs_with_group['KW_STR'], 
-            categories=CHALLENGE_KWS_STR,
-            ordered=True
-        )
-
-        # Wöchentliche KM pro Gruppe
-        group_weekly = df_runs_with_group.groupby(['Gruppe', 'KW_STR'], observed=True)['KM'].sum().reset_index()
-        
-        # Kumuliere die KM pro Gruppe
-        group_weekly['Kumulierte_KM'] = group_weekly.groupby('Gruppe')['KM'].cumsum()
     
+    # Sicherstellen, dass die Laufdaten nicht leer sind und die Teilnehmerdaten die Gruppe enthalten
+    if not df_runs.empty and 'Gruppe' in df_teilnehmer.columns:
+        
+        # Laufdaten um Gruppenzugehörigkeit erweitern
+        # Wichtig: Die Gruppenzugehörigkeit muss von df_teilnehmer geholt werden, 
+        # da df_runs (Laufdaten) die Gruppe selbst nicht enthält.
+        df_runs_with_group = pd.merge(df_runs, df_teilnehmer[['Name', 'Gruppe']], on='Name', how='left')
+        
+        # Entferne Läufe von Personen, die keiner Gruppe zugeordnet werden konnten (Gruppe ist NaN)
+        df_runs_with_group.dropna(subset=['Gruppe'], inplace=True)
 
-    # df_runs: Reiner Laufdaten-DF (für Rekorde und detaillierte KW-Ansicht)
-    # df_merged_gesamt: Aggregierte Gesamt-KM pro Name (inkl. 0-KM-Läufer) -> Basis für Metriken, Leaderboards, Bar-Charts
+        # Überprüfe erneut, ob nach dem Aufräumen noch Daten übrig sind
+        if not df_runs_with_group.empty:
+            
+            # Setze die KW_STR Spalte als geordnete Kategorie für die Kumulierung
+            df_runs_with_group['KW_STR'] = pd.Categorical(
+                df_runs_with_group['KW_STR'], 
+                categories=CHALLENGE_KWS_STR,
+                ordered=True
+            )
+
+            # Wöchentliche KM pro Gruppe
+            # observed=True ist wichtig, um nur die wirklich vorhandenen Kategorien zu verwenden
+            group_weekly = df_runs_with_group.groupby(['Gruppe', 'KW_STR'], observed=True)['KM'].sum().reset_index()
+            
+            # Kumuliere die KM pro Gruppe
+            group_weekly['Kumulierte_KM'] = group_weekly.groupby('Gruppe')['KM'].cumsum()
+        
     return df_runs, weekly_summary, group_weekly, df_merged_gesamt
 
 # Daten laden und transformieren
@@ -649,3 +657,4 @@ df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
 
 
 st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
+
