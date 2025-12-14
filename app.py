@@ -528,17 +528,22 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 st.subheader("9. Kilometer-Entwicklung pro Kalenderwoche (KW)")
 
-df_base_kw = df_runs.copy() # Start mit den reinen Laufdaten
+# Starte mit den reinen Laufdaten, da wir Läufe pro KW zählen
+df_base_kw = df_runs.copy() 
 
-# Filter auf die reinen Laufdaten anwenden
-if selected_group != 'Alle':
-    # Um nach Gruppe zu filtern, müssen wir die Gruppenzugehörigkeit hinzufügen
-    df_base_kw = pd.merge(df_base_kw, df_merged_gesamt[['Name', 'Gruppe']], on='Name', how='left')
-    df_base_kw = df_base_kw[df_base_kw['Gruppe'] == selected_group].copy()
+# Nur fortfahren, wenn Laufdaten vorhanden sind
+if not df_base_kw.empty:
     
-if selected_runner != 'Alle':
-    df_base_kw = df_base_kw[df_base_kw['Name'] == selected_runner].copy()
+    # Füge die Gruppeninformation aus df_merged_gesamt hinzu, um nach Gruppe filtern zu können
+    # Wir nehmen nur Name und Gruppe, damit keine unnötigen Spalten gemerged werden
+    df_base_kw = pd.merge(df_base_kw, df_merged_gesamt[['Name', 'Gruppe']], on='Name', how='left')
 
+    # Filter anwenden
+    if selected_group != 'Alle':
+        df_base_kw = df_base_kw[df_base_kw['Gruppe'] == selected_group].copy()
+        
+    if selected_runner != 'Alle':
+        df_base_kw = df_base_kw[df_base_kw['Name'] == selected_runner].copy()
 
 filter_label = "alle Läufer"
 if selected_group != 'Alle' and selected_runner == 'Alle':
@@ -547,6 +552,7 @@ elif selected_runner != 'Alle':
     filter_label = f"Name: {selected_runner}"
 
 if not df_base_kw.empty:
+    # ... Rest des Chart-Codes bleibt gleich ...
     weekly_summary_chart = df_base_kw.groupby('KW_STR')['KM'].sum()
     weekly_summary_chart = weekly_summary_chart.reindex(CHALLENGE_KWS_STR, fill_value=0).reset_index()
     weekly_summary_chart.columns = ['KW_STR', 'Wochen-KM']
@@ -555,6 +561,7 @@ else:
     
 
 fig_kw = px.bar(
+# ... (Rest des Plotly-Codes bleibt gleich) ...
     weekly_summary_chart, 
     x='KW_STR',
     y='Wochen-KM',
@@ -575,7 +582,7 @@ fig_kw.update_xaxes(type='category', categoryorder='array', categoryarray=CHALLE
 
 st.plotly_chart(fig_kw, use_container_width=True)
 
-st.markdown("<br>", unsafe_allow_html=True) 
+st.markdown("<br>", unsafe_allow_html=True)
 
 # ==============================================================================
 # 10. DIAGRAMM: Kumulierte Gruppen-Entwicklung (Liniendiagramm)
@@ -661,5 +668,6 @@ df_detail_display = df_detail_display.rename(columns={'KM': 'Gesamt-KM'})
 
 
 st.dataframe(df_detail_display, use_container_width=True, hide_index=True)
+
 
 
