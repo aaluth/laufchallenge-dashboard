@@ -18,7 +18,7 @@ BACKGROUND_COLOR = "#FFFFFF"
 SECONDARY_BACKGROUND_COLOR = "#F0F2F6" 
 
 # Challenge Zeitraum KWs
-CHALLENGE_KWS = [45, 46, 47, 48, 49, 50, 51, 52, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+CHALLENGE_KWS = [51, 52, 1, 2, 3, 4, 5, 6, 7]
 CHALLENGE_KWS_STR = [str(kw) for kw in CHALLENGE_KWS]
 
 st.set_page_config(
@@ -555,4 +555,5 @@ st.markdown("<br>", unsafe_allow_html=True)
 
 st.subheader(f"Detailübersicht (Gefilterte Daten)")
 st.dataframe(df_filtered, use_container_width=True, hide_index=True)
+
 
